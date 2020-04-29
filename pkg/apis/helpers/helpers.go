@@ -26,7 +26,7 @@ import (
 	"syscall"
 	"time"
 
-	"k8s.io/api/core/v1"
+	v1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -82,8 +82,10 @@ func ControlledBy(obj interface{}, gvk schema.GroupVersionKind) bool {
 	return false
 }
 
-// CreateConfigMapIfNotExist  creates config map resource if not present
-func CreateConfigMapIfNotExist(job *vcbatch.Job, kubeClients kubernetes.Interface, data map[string]string, cmName string) error {
+// CreateOrUpdateConfigMap :
+// 1. creates config map resource if not present
+// 2. updates configmap is present
+func CreateOrUpdateConfigMap(job *vcbatch.Job, kubeClients kubernetes.Interface, data map[string]string, cmName string) error {
 	// If ConfigMap does not exist, create one for Job.
 	cmOld, err := kubeClients.CoreV1().ConfigMaps(job.Namespace).Get(cmName, metav1.GetOptions{})
 	if err != nil {
@@ -136,6 +138,9 @@ func CreateSecret(job *vcbatch.Job, kubeClients kubernetes.Interface, data map[s
 	}
 
 	_, err := kubeClients.CoreV1().Secrets(job.Namespace).Create(secret)
+	if apierrors.IsAlreadyExists(err) {
+		return nil
+	}
 
 	return err
 }
