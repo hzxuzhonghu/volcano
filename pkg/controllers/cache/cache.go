@@ -59,7 +59,16 @@ func JobKey(job *v1alpha1.Job) string {
 }
 
 func jobTerminated(job *apis.JobInfo) bool {
-	return job.Job == nil && len(job.Pods) == 0
+	podClean := true
+	for _, pods := range job.Pods {
+		for _, pod := range pods {
+			if pod.Status.Phase != v1.PodSucceeded {
+				podClean = false
+			}
+		}
+	}
+
+	return job.Job == nil && podClean
 }
 
 func jobKeyOfPod(pod *v1.Pod) (string, error) {
