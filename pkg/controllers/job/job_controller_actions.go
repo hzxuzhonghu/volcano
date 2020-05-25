@@ -69,6 +69,8 @@ func (cc *Controller) killJob(jobInfo *apis.JobInfo, podRetainPhase state.PhaseM
 				if err == nil {
 					if existing {
 						terminating++
+					} else {
+						cc.cache.DeletePod(pod)
 					}
 					continue
 				}
