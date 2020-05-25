@@ -461,7 +461,7 @@ func TestDeleteJobPod(t *testing.T) {
 				}
 			}
 
-			err := fakeController.deleteJobPod(testcase.Job.Name, testcase.DeletePod)
+			_, err := fakeController.deleteJobPod(testcase.Job.Name, testcase.DeletePod)
 			if err != testcase.ExpextVal {
 				t.Errorf("Expected return value to be equal to expected: %s, but got: %s", testcase.ExpextVal, err)
 			}
