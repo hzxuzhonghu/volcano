@@ -241,6 +241,7 @@ func (ni *NodeInfo) AddTask(task *TaskInfo) error {
 	// Node will hold a copy of task to make sure the status
 	// change will not impact resource in node.
 	ti := task.Clone()
+	klog.Infof("-----------------------------------------------------task %s status %s", task.Name, task.Status)
 
 	if ni.Node != nil {
 		switch ti.Status {
@@ -266,6 +267,7 @@ func (ni *NodeInfo) AddTask(task *TaskInfo) error {
 	task.NodeName = ni.Name
 	ti.NodeName = ni.Name
 	ni.Tasks[key] = ti
+	klog.Infof("-----------add task %s to node %s ", task.Name, ni.Name)
 
 	return nil
 }

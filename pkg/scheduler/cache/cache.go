@@ -557,6 +557,9 @@ func (sc *SchedulerCache) Bind(taskInfo *schedulingapi.TaskInfo, hostname string
 		return err
 	}
 
+	klog.V(3).Infof("---- commit:  After allocated Task <%v/%v> to Node <%v>: idle <%v>, used <%v>, releasing <%v>",
+		task.Namespace, task.Name, node.Name, node.Idle, node.Used, node.Releasing)
+
 	p := task.Pod
 	go func() {
 		if err := sc.Binder.Bind(p, hostname); err != nil {
