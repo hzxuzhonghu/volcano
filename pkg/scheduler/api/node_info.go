@@ -18,6 +18,7 @@ package api
 
 import (
 	"fmt"
+	"runtime/debug"
 
 	v1 "k8s.io/api/core/v1"
 	"k8s.io/klog"
@@ -222,6 +223,10 @@ func (ni *NodeInfo) allocateIdleResource(ti *TaskInfo) error {
 //
 // If error occurs both task and node are guaranteed to be in the original state.
 func (ni *NodeInfo) AddTask(task *TaskInfo) error {
+	klog.Infof("-----------add task %s tak node name %s  to node %s ", task.Name, task.NodeName, ni.Name)
+	debug.PrintStack()
+	klog.Infof("---------------------------------------------------------------------------------")
+
 	if len(task.NodeName) > 0 && len(ni.Name) > 0 && task.NodeName != ni.Name {
 		return fmt.Errorf("task <%v/%v> already on different node <%v>",
 			task.Namespace, task.Name, task.NodeName)
