@@ -544,6 +544,7 @@ func (sc *SchedulerCache) Bind(taskInfo *schedulingapi.TaskInfo, hostname string
 
 	// Add task to the node.
 	if err := node.AddTask(task); err != nil {
+		klog.Errorf("---------------------------failed add task %s to node %s", task.Name, node.Name)
 		// After failing to update task to a node we need to revert task status from Releasing,
 		// otherwise task might be stuck in the Releasing state indefinitely.
 		if err := job.UpdateTaskStatus(task, originalStatus); err != nil {
@@ -552,6 +553,7 @@ func (sc *SchedulerCache) Bind(taskInfo *schedulingapi.TaskInfo, hostname string
 				task.Namespace, task.Name, task.Status, originalStatus, node.Name, err)
 			sc.resyncTask(task)
 		}
+
 		return err
 	}
 

@@ -287,6 +287,7 @@ func (s *Statement) allocate(task *api.TaskInfo) error {
 	}
 
 	if err := s.ssn.cache.Bind(task, task.NodeName); err != nil {
+		klog.Errorf("---------------bind task %s failed", task.Name)
 		return err
 	}
 
