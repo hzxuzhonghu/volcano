@@ -200,7 +200,7 @@ func TestSchedulerCache_Bind_NodeWithInsufficientResources(t *testing.T) {
 		t.Errorf("expected bind to fail for node with insufficient resources")
 	}
 
-	_, taskAfterBind, err := cache.findJobAndTask(task)
+	_, taskAfterBind, err := cache.findJobAndTask(task.Job, task.UID)
 	if err != nil {
 		t.Errorf("expected to find task after failed bind")
 	}

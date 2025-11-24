@@ -149,7 +149,7 @@ type TaskInfo struct {
 	CustomBindErrHandlerSucceeded bool
 }
 
-func getJobID(pod *v1.Pod) JobID {
+func GetJobID(pod *v1.Pod) JobID {
 	if gn, found := pod.Annotations[v1beta1.KubeGroupNameAnnotationKey]; found && len(gn) != 0 {
 		// Make sure Pod and PodGroup belong to the same namespace.
 		jobID := fmt.Sprintf("%s/%s", pod.Namespace, gn)
@@ -188,7 +188,7 @@ func NewTaskInfo(pod *v1.Pod) *TaskInfo {
 	hasRestartableInitContainer := hasRestartableInitContainer(pod)
 	// initialize pod scheduling gates info here since it will not change in a scheduling cycle
 	schGated := calSchedulingGated(pod)
-	jobID := getJobID(pod)
+	jobID := GetJobID(pod)
 
 	ti := &TaskInfo{
 		UID:                         TaskID(pod.UID),

@@ -48,17 +48,32 @@ import (
 	volumeutil "k8s.io/kubernetes/pkg/volume/util"
 	"k8s.io/utils/cpuset"
 
+	batch "volcano.sh/apis/pkg/apis/batch/v1alpha1"
 	nodeinfov1alpha1 "volcano.sh/apis/pkg/apis/nodeinfo/v1alpha1"
 	"volcano.sh/apis/pkg/apis/scheduling"
 	"volcano.sh/apis/pkg/apis/scheduling/scheme"
 	schedulingv1beta1 "volcano.sh/apis/pkg/apis/scheduling/v1beta1"
 	topologyv1alpha1 "volcano.sh/apis/pkg/apis/topology/v1alpha1"
-	"volcano.sh/apis/pkg/apis/utils"
 	schedulingapi "volcano.sh/volcano/pkg/scheduler/api"
 	"volcano.sh/volcano/pkg/scheduler/metrics"
 )
 
 var DefaultAttachableVolumeQuantity int64 = math.MaxInt32
+
+var taskInfoAnnotationKeys = []string{
+	schedulingv1beta1.KubeGroupNameAnnotationKey,
+	schedulingapi.TaskPriorityAnnotation,
+	schedulingv1beta1.PodPreemptable,
+	schedulingv1beta1.RevocableZone,
+	schedulingv1beta1.NumaPolicyKey,
+	schedulingv1beta1.TopologyDecisionAnnotation,
+	batch.TaskSpecKey,
+}
+
+var taskInfoLabelKeys = []string{
+	batch.TaskSpecKey,
+	schedulingv1beta1.PodPreemptable,
+}
 
 func isTerminated(status schedulingapi.TaskStatus) bool {
 	return status == schedulingapi.Succeeded || status == schedulingapi.Failed
@@ -311,46 +326,137 @@ func (sc *SchedulerCache) allocatedPodInCache(pod *v1.Pod) bool {
 	return false
 }
 
+// supported pod updatable fields https://github.com/kubernetes/kubernetes/blob/5bcb7599736327cd8c6d23e398002354a6e40f68/pkg/apis/core/validation/validation.go#L5685-L5691
+//
+//	var updatablePodSpecFields = []string{
+//		"`spec.containers[*].image`",
+//		"`spec.initContainers[*].image`",
+//		"`spec.activeDeadlineSeconds`",
+//		"`spec.tolerations` (only additions to existing tolerations)",
+//		"`spec.terminationGracePeriodSeconds` (allow it to be set to 1 if it was previously negative)",
+//	}
+func taskInfoRelevantPodChange(oldPod, newPod *v1.Pod) bool {
+	if oldPod == nil || newPod == nil {
+		return true
+	}
+
+	if oldPod.Spec.NodeName != newPod.Spec.NodeName {
+		return true
+	}
+
+	if !deletionTimestampEqual(oldPod.DeletionTimestamp, newPod.DeletionTimestamp) {
+		return true
+	}
+
+	if oldPod.Status.Phase != newPod.Status.Phase {
+		return true
+	}
+
+	if !equality.Semantic.DeepEqual(oldPod.Status.ContainerStatuses, newPod.Status.ContainerStatuses) ||
+		!equality.Semantic.DeepEqual(oldPod.Status.InitContainerStatuses, newPod.Status.InitContainerStatuses) {
+		return true
+	}
+
+	for _, key := range taskInfoAnnotationKeys {
+		if annotationChanged(oldPod, newPod, key) {
+			return true
+		}
+	}
+
+	for _, key := range taskInfoLabelKeys {
+		if labelChanged(oldPod, newPod, key) {
+			return true
+		}
+	}
+
+	return false
+}
+
+func annotationChanged(oldPod, newPod *v1.Pod, key string) bool {
+	return mapValue(oldPod.Annotations, key) != mapValue(newPod.Annotations, key)
+}
+
+func labelChanged(oldPod, newPod *v1.Pod, key string) bool {
+	return mapValue(oldPod.Labels, key) != mapValue(newPod.Labels, key)
+}
+
+func mapValue(m map[string]string, key string) string {
+	if m == nil {
+		return ""
+	}
+	return m[key]
+}
+
+func priorityValue(priority *int32) int32 {
+	if priority == nil {
+		return 0
+	}
+	return *priority
+}
+
+func deletionTimestampEqual(oldTS, newTS *metav1.Time) bool {
+	if oldTS == nil && newTS == nil {
+		return true
+	}
+	if (oldTS == nil) != (newTS == nil) {
+		return false
+	}
+	return oldTS.Equal(newTS)
+}
+
 // Assumes that lock is already acquired.
 func (sc *SchedulerCache) updatePod(oldPod, newPod *v1.Pod) error {
+	if oldPod.ResourceVersion == newPod.ResourceVersion {
+		return nil
+	}
 	//ignore the update event if pod is allocated in cache but not present in NodeName
 	if sc.allocatedPodInCache(newPod) && newPod.Spec.NodeName == "" {
 		klog.V(4).Infof("Pod <%s/%v> already in cache with allocated status, ignore the update event", newPod.Namespace, newPod.Name)
 		return nil
 	}
 
-	if err := sc.deletePod(oldPod); err != nil {
+	if !taskInfoRelevantPodChange(oldPod, newPod) {
+		klog.V(5).Infof("Pod <%s/%s> update does not affect taskInfo, skip cache refresh", newPod.Namespace, newPod.Name)
+		return nil
+	}
+
+	newTask, err := sc.NewTaskInfo(newPod)
+	if err != nil {
+		klog.Errorf("generate taskInfo for pod(%s) failed: %v", newPod.Name, err)
+		sc.resyncTask(newTask)
+	}
+
+	// get old task info
+	_, oldTask, err := sc.findJobAndTask(schedulingapi.GetJobID(oldPod), schedulingapi.TaskID(oldPod.UID))
+	if err != nil {
 		return err
 	}
-	//when delete pod, the ownerreference of pod will be set nil, just as orphan pod
-	if len(utils.GetController(newPod)) == 0 {
-		newPod.OwnerReferences = oldPod.OwnerReferences
-	}
-	return sc.addPod(newPod)
+
+	return sc.updateTask(oldTask, newTask)
 }
 
-func (sc *SchedulerCache) deleteTask(ti *schedulingapi.TaskInfo) error {
+func (sc *SchedulerCache) deleteTask(task *schedulingapi.TaskInfo) error {
 	var jobErr, nodeErr error
 
-	if len(ti.Job) != 0 {
-		if job, found := sc.Jobs[ti.Job]; found {
-			jobErr = job.DeleteTaskInfo(ti)
+	if len(task.Job) != 0 {
+		if job, found := sc.Jobs[task.Job]; found {
+			jobErr = job.DeleteTaskInfo(task)
 		} else {
-			klog.Warningf("Failed to find Job <%v> for Task <%v/%v> in cache.", ti.Job, ti.Namespace, ti.Name)
+			klog.Warningf("Failed to find Job <%v> for Task <%v/%v> in cache.", task.Job, task.Namespace, task.Name)
 		}
 	} else {
-		klog.V(4).Infof("Task <%s/%s> has null jobID in cache.", ti.Namespace, ti.Name)
+		klog.V(4).Infof("Task <%s/%s> has null jobID in cache.", task.Namespace, task.Name)
 	}
 
-	if len(ti.NodeName) != 0 {
+	if len(task.NodeName) != 0 {
 		// We don't need to delete tasks from the Nodes cache that are already terminated.
 		// These tasks will be cleaned up during the UpdatePod -> updatePod -> deletePod -> deleteTask sequence,
 		// and will not be re-added with node.AddTask when updatePod -> addPod -> addTask occurs.
 		// This covers the case when taskStatus changes from Releasing to Failed or Succeeded.
-		if !isTerminated(ti.Status) {
-			node := sc.Nodes[ti.NodeName]
+		if !isTerminated(task.Status) {
+			node := sc.Nodes[task.NodeName]
 			if node != nil {
-				nodeErr = node.RemoveTask(ti)
+				nodeErr = node.RemoveTask(task)
 			}
 		}
 	}
@@ -508,21 +614,16 @@ func (sc *SchedulerCache) AddOrUpdateNode(node *v1.Node) error {
 	sc.Mutex.Lock()
 	defer sc.Mutex.Unlock()
 
-	if sc.Nodes[node.Name] != nil {
-		sc.Nodes[node.Name].SetNode(node)
+	nodeInfo, found := sc.Nodes[node.Name]
+	nodeExisted := found && nodeInfo != nil
+	if nodeExisted {
+		nodeInfo.SetNode(node)
 		sc.removeNodeImageStates(node.Name)
 	} else {
 		sc.Nodes[node.Name] = schedulingapi.NewNodeInfo(node)
 	}
 	sc.addNodeImageStates(node, sc.Nodes[node.Name])
 
-	var nodeExisted bool
-	for _, name := range sc.NodeList {
-		if name == node.Name {
-			nodeExisted = true
-			break
-		}
-	}
 	if !nodeExisted {
 		sc.NodeList = append(sc.NodeList, node.Name)
 	}

@@ -827,17 +827,17 @@ func (sc *SchedulerCache) WaitForCacheSync(stopCh <-chan struct{}) {
 }
 
 // findJobAndTask returns job and the task info
-func (sc *SchedulerCache) findJobAndTask(taskInfo *schedulingapi.TaskInfo) (*schedulingapi.JobInfo, *schedulingapi.TaskInfo, error) {
-	job, found := sc.Jobs[taskInfo.Job]
+func (sc *SchedulerCache) findJobAndTask(jobId schedulingapi.JobID, taskId schedulingapi.TaskID) (*schedulingapi.JobInfo, *schedulingapi.TaskInfo, error) {
+	job, found := sc.Jobs[jobId]
 	if !found {
 		return nil, nil, fmt.Errorf("failed to find Job %v for Task %v",
-			taskInfo.Job, taskInfo.UID)
+			jobId, taskId)
 	}
 
-	task, found := job.Tasks[taskInfo.UID]
+	task, found := job.Tasks[taskId]
 	if !found {
 		return nil, nil, fmt.Errorf("failed to find task in status %v by id %v",
-			taskInfo.Status, taskInfo.UID)
+			task.Status, taskId)
 	}
 
 	return job, task, nil
@@ -850,7 +850,7 @@ func (sc *SchedulerCache) Evict(taskInfo *schedulingapi.TaskInfo, reason string)
 	sc.Mutex.Lock()
 	defer sc.Mutex.Unlock()
 
-	job, task, err := sc.findJobAndTask(taskInfo)
+	job, task, err := sc.findJobAndTask(taskInfo.Job, taskInfo.UID)
 	if err != nil {
 		return err
 	}
@@ -1220,7 +1220,7 @@ func (sc *SchedulerCache) AddBindTask(bindContext *BindContext) error {
 	klog.V(5).Infof("add bind task %v/%v", bindContext.TaskInfo.Namespace, bindContext.TaskInfo.Name)
 	sc.Mutex.Lock()
 	defer sc.Mutex.Unlock()
-	job, task, err := sc.findJobAndTask(bindContext.TaskInfo)
+	job, task, err := sc.findJobAndTask(bindContext.TaskInfo.Job, bindContext.TaskInfo.UID)
 	if err != nil {
 		return err
 	}
